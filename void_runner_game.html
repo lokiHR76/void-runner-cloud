@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VOID RUNNER - MAD INTERACTIVE</title>
+    <!-- Strictly Black and White Theme -->
+    <style>
+        body {
+            background-color: #000000;
+            color: #ffffff;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        canvas {
+            border: 2px solid #ffffff;
+            background-color: #000000;
+            cursor: pointer;
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+            max-width: 100%;
+            display: block;
+        }
+        #ui-panel {
+            margin-top: 20px;
+            background-color: #111111;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #333333;
+            text-align: center;
+            width: 100%;
+            max-width: 600px;
+        }
+        button {
+            background-color: #ffffff;
+            color: #000000;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+        button:hover {
+            background-color: #cccccc;
+            transform: translateY(-1px);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        #message-box {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            border: 2px solid white;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            z-index: 100;
+            box-shadow: 0 0 50px rgba(255, 255, 255, 0.8);
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-panel">
+        <h1 style="font-size: 1.5rem;">VOID RUNNER</h1>
+        <p id="score-display">SCORE: 0</p>
+        <button id="start-button">START GAME</button>
+    </div>
+    
+    <canvas id="gameCanvas" width="800" height="500"></canvas>
+
+    <!-- Custom Modal/Message Box (Replaces alert()) -->
+    <div id="message-box">
+        <h2 id="modal-title" style="font-size: 2rem; margin-bottom: 10px;">Game Over</h2>
+        <p id="modal-content" style="margin-bottom: 20px;">You hit an obstacle!</p>
+        <button onclick="hideMessage()">OK</button>
+    </div>
+
+    <script>
+        // Set up Canvas and Context
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game State Variables
+        let isRunning = false;
+        let score = 0;
+        let player = {
+            x: 50,
+            y: canvas.height / 2,
+            radius: 10,
+            speed: 5,
+            vy: 0,
+            gravity: 0.2
+        };
+        let obstacles = [];
+        let obstacleSpawnRate = 120; // frames
+        let frameCount = 0;
+        let gameLoopInterval;
+
+        const startButton = document.getElementById('start-button');
+        const scoreDisplay = document.getElementById('score-display');
+        const messageBox = document.getElementById('message-box');
+        const modalTitle = document.getElementById('modal-title');
+        const modalContent = document.getElementById('modal-content');
+
+        // Helper function for the custom message box
+        function showMessage(title, content) {
+            modalTitle.innerText = title;
+            modalContent.innerText = content;
+            messageBox.style.display = 'block';
+            startButton.innerText = 'RESTART';
+        }
+
+        function hideMessage() {
+            messageBox.style.display = 'none';
+        }
+
+        // Initialize Game State
+        function initGame() {
+            player.y = canvas.height / 2;
+            player.vy = 0;
+            score = 0;
+            obstacles = [];
+            frameCount = 0;
+            scoreDisplay.innerText = 'SCORE: 0';
+            hideMessage();
+        }
+
+        // Draw the Player (Monochrome Circle)
+        function drawPlayer() {
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff'; // White player
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        // Update Player Position and Apply Gravity/Input
+        function updatePlayer() {
+            // Apply gravity
+            player.vy += player.gravity;
+            player.y += player.vy;
+
+            // Boundary checking (Ground/Ceiling)
+            if (player.y + player.radius > canvas.height) {
+                player.y = canvas.height - player.radius;
+                player.vy = 0; // Stop falling
+            }
+            if (player.y - player.radius < 0) {
+                player.y = player.radius;
+                player.vy = 0; // Stop rising
+            }
+        }
+
+        // Create new Obstacles
+        function createObstacle() {
+            const gapSize = 120; // Vertical gap size
+            const obstacleWidth = 20;
+            const minHeight = 50;
+            const maxHeight = canvas.height - minHeight - gapSize;
+            
+            // Randomly determine the height of the top segment
+            const topHeight = Math.random() * (maxHeight - minHeight) + minHeight;
+
+            // Obstacle structure: Top block and Bottom block
+            obstacles.push({
+                x: canvas.width,
+                width: obstacleWidth,
+                topHeight: topHeight,
+                bottomY: topHeight + gapSize,
+                passed: false
+            });
+        }
+
+        // Draw all Obstacles
+        function drawObstacles() {
+            obstacles.forEach(obs => {
+                ctx.fillStyle = '#ffffff'; // White obstacles
+
+                // Draw Top Bar
+                ctx.fillRect(obs.x, 0, obs.width, obs.topHeight);
+
+                // Draw Bottom Bar
+                ctx.fillRect(obs.x, obs.bottomY, obs.width, canvas.height - obs.bottomY);
+            });
+        }
+
+        // Update Obstacle positions and remove off-screen ones
+        function updateObstacles() {
+            obstacles.forEach(obs => {
+                obs.x -= player.speed;
+            });
+
+            // Remove obstacles that have moved off-screen to the left
+            obstacles = obstacles.filter(obs => obs.x + obs.width > 0);
+        }
+
+        // Check for Collision with Obstacles
+        function checkCollision() {
+            for (let i = 0; i < obstacles.length; i++) {
+                const obs = obstacles[i];
+                
+                // Simplified AABB collision check (Player circle vs. Obstacle rectangles)
+                const playerLeft = player.x - player.radius;
+                const playerRight = player.x + player.radius;
+                const playerTop = player.y - player.radius;
+                const playerBottom = player.y + player.radius;
+
+                const obsLeft = obs.x;
+                const obsRight = obs.x + obs.width;
+                const obsTop1 = 0;
+                const obsBottom1 = obs.topHeight;
+                const obsTop2 = obs.bottomY;
+                const obsBottom2 = canvas.height;
+
+                // Check collision with top obstacle
+                if (playerRight > obsLeft && playerLeft < obsRight) {
+                    if (playerTop < obsBottom1 || playerBottom > obsTop2) {
+                        return true; // Collision detected
+                    }
+                }
+            }
+            return false;
+        }
+        
+        // Update Score and increase difficulty
+        function updateScore() {
+            obstacles.forEach(obs => {
+                // If player is past the obstacle's center point and hasn't been scored yet
+                if (!obs.passed && player.x > obs.x + obs.width / 2) {
+                    score += 1;
+                    obs.passed = true;
+                    scoreDisplay.innerText = 'SCORE: ' + score;
+
+                    // Increase difficulty (speed up player and decrease spawn rate slightly)
+                    if (score % 5 === 0) {
+                        player.speed += 0.5;
+                        obstacleSpawnRate = Math.max(80, obstacleSpawnRate - 5);
+                    }
+                }
+            });
+        }
+
+
+        // Main Game Loop
+        function gameLoop() {
+            if (!isRunning) return;
+
+            // Clear the canvas (always black background)
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 1. Update Game State
+            updatePlayer();
+            updateObstacles();
+            updateScore();
+
+            // 2. Spawn New Obstacles
+            frameCount++;
+            if (frameCount % obstacleSpawnRate === 0) {
+                createObstacle();
+                frameCount = 0;
+            }
+
+            // 3. Draw Elements
+            drawObstacles();
+            drawPlayer();
+
+            // 4. Check for Game Over
+            if (checkCollision()) {
+                endGame();
+                return;
+            }
+
+            // Loop
+            gameLoopInterval = requestAnimationFrame(gameLoop);
+        }
+
+        // Game Control Functions
+        function startGame() {
+            if (isRunning) return;
+            initGame();
+            isRunning = true;
+            startButton.innerText = 'PAUSE';
+            gameLoop();
+        }
+
+        function pauseGame() {
+            isRunning = false;
+            startButton.innerText = 'RESUME';
+            cancelAnimationFrame(gameLoopInterval);
+        }
+
+        function endGame() {
+            isRunning = false;
+            cancelAnimationFrame(gameLoopInterval);
+            showMessage('GAME OVER', `Your final score: ${score}`);
+        }
+
+        // Event Listeners
+        startButton.addEventListener('click', () => {
+            if (isRunning) {
+                pauseGame();
+            } else {
+                startGame();
+            }
+        });
+        
+        // Tap/Click to make player jump
+        canvas.addEventListener('mousedown', () => {
+            if (isRunning) {
+                player.vy = -7; // Higher jump velocity
+            }
+        });
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault(); // Prevent scrolling on mobile
+            if (isRunning) {
+                player.vy = -7; // Higher jump velocity
+            }
+        });
+
+        // Initialize canvas sizing for responsiveness
+        function resizeCanvas() {
+            canvas.width = Math.min(800, window.innerWidth - 40);
+            canvas.height = Math.min(500, window.innerHeight * 0.6);
+            player.x = canvas.width * 0.1; // Keep player position relative
+            initGame();
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        window.onload = resizeCanvas;
+    </script>
+</body>
+</html>
